@@ -1,0 +1,28 @@
+{
+  "name": "accent-translator",
+  "version": "1.0.0",
+  "description": "Habla en tu voz y escúchate con cualquier acento del mundo.",
+  "main": "index.js",
+  "scripts": {
+    "start:gateway": "node backend/gateway/server.js",
+    "start:auth": "node backend/auth-service/server.js",
+    "start:conversion": "node backend/conversion-service/server.js",
+    "start:admin": "node backend/admin-service/server.js",
+    "start:all": "concurrently \"npm run start:gateway\" \"npm run start:auth\" \"npm run start:conversion\" \"npm run start:admin\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.16.0",
+    "bcryptjs": "^3.0.3",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "google-auth-library": "^10.6.2",
+    "http-proxy-middleware": "^3.0.5",
+    "jsonwebtoken": "^9.0.3",
+    "sqlite3": "^6.0.1"
+  }
+}
