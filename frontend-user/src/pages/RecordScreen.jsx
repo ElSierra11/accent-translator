@@ -138,18 +138,18 @@ export const RecordScreen = () => {
   }, [timer, isRecording]);
 
   const drawWaveform = () => {
-    if (!canvasRef.current || !analyserRef.current) return;
+    if (!canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    const bufferLength = analyserRef.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
 
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
 
+    let phase = 0;
+
     const draw = () => {
+      if (!isRecordingRef.current) return;
       animFrameRef.current = requestAnimationFrame(draw);
-      analyserRef.current.getByteTimeDomainData(dataArray);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
@@ -170,39 +170,45 @@ export const RecordScreen = () => {
       
       ctx.beginPath();
 
-      const sliceWidth = canvas.width / bufferLength;
-      let x = 0;
-      
-      // Draw mirrored dual wave
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const amplitude = Math.abs(v - 1.0) * 1.6; // Scale volume amplitude
-        const yTop = (canvas.height / 2) - (amplitude * canvas.height / 2.2);
+      const points = 100;
+      const sliceWidth = canvas.width / points;
+      phase += 0.18; // Speed of movement
+
+      // Draw first glowing fluid wave
+      for (let i = 0; i <= points; i++) {
+        const x = i * sliceWidth;
+        const edgeFactor = Math.sin((i / points) * Math.PI); // Fades out at the edges
+        const y = (canvas.height / 2) + 
+          (Math.sin(i * 0.15 + phase) * 22 * edgeFactor) + 
+          (Math.cos(i * 0.08 - phase * 0.5) * 11 * edgeFactor);
         
         if (i === 0) {
-          ctx.moveTo(x, yTop);
+          ctx.moveTo(x, y);
         } else {
-          ctx.lineTo(x, yTop);
+          ctx.lineTo(x, y);
         }
-        x += sliceWidth;
       }
-      
-      x = canvas.width;
-      for (let i = bufferLength - 1; i >= 0; i--) {
-        const v = dataArray[i] / 128.0;
-        const amplitude = Math.abs(v - 1.0) * 1.6;
-        const yBottom = (canvas.height / 2) + (amplitude * canvas.height / 2.2);
-        ctx.lineTo(x, yBottom);
-        x -= sliceWidth;
-      }
-      
-      ctx.closePath();
-      
-      // Transparent gradient fill inside waveform shape
-      ctx.fillStyle = `${themeColor}12`;
-      ctx.fill();
       ctx.stroke();
-      
+
+      // Draw a second, thinner, out-of-phase wave for multi-layered depth
+      ctx.beginPath();
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 6;
+      for (let i = 0; i <= points; i++) {
+        const x = i * sliceWidth;
+        const edgeFactor = Math.sin((i / points) * Math.PI);
+        const y = (canvas.height / 2) - 
+          (Math.sin(i * 0.22 + phase * 1.3) * 16 * edgeFactor) - 
+          (Math.cos(i * 0.06 - phase * 0.7) * 9 * edgeFactor);
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
       // Reset shadow for performance
       ctx.shadowBlur = 0;
     };
@@ -223,13 +229,6 @@ export const RecordScreen = () => {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioContextRef.current.createMediaStreamSource(stream);
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256; // Smaller for smoother wave line
-      source.connect(analyserRef.current);
-      
       setFinalTranscript('');
       setTranscript('');
       latestTranscriptRef.current = '';
@@ -263,7 +262,6 @@ export const RecordScreen = () => {
     
     clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (audioContextRef.current) audioContextRef.current.close();
 
     const currentFinal = latestTranscriptRef.current;
     
