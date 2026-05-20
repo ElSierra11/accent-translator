@@ -19,6 +19,7 @@ export const RecordScreen = () => {
   }, [selectedAccent]);
 
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
   const [timer, setTimer] = useState(0);
   const [status, setStatus] = useState({ msg: 'Selecciona una voz y comienza', type: 'idle' });
   const [transcript, setTranscript] = useState('');
@@ -47,13 +48,19 @@ export const RecordScreen = () => {
     };
     fetchHistory();
     
+    // Helper to get general base language for maximum Web Speech compatibility on mobile
+    const getBaseLanguage = (locale) => {
+      if (!locale) return 'es';
+      return locale.split('-')[0]; // Returns 'es', 'en', 'pt', etc.
+    };
+
     // Setup Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'es-ES';
+      recognition.lang = 'es';
       
       recognition.onresult = (event) => {
         let interimTranscript = '';
@@ -80,13 +87,37 @@ export const RecordScreen = () => {
       };
 
       recognition.onerror = (event) => {
-        console.error("Speech recognition error", event.error);
+        console.warn("Speech recognition error/warning:", event.error);
+        
+        // Critical: Mobile browsers frequently trigger 'no-speech' or 'aborted' during silences.
+        // We MUST ignore them to keep the recording active instead of crashing.
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          return;
+        }
+
         setStatus({ msg: "Error de reconocimiento: " + event.error, type: "error" });
-        if (recognitionRef.current) recognitionRef.current.stop();
+        isRecordingRef.current = false;
         setIsRecording(false);
+        if (recognitionRef.current) {
+          try { recognitionRef.current.stop(); } catch(e) {}
+        }
         clearInterval(timerRef.current);
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
         if (audioContextRef.current) audioContextRef.current.close();
+      };
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended. activeState:", isRecordingRef.current);
+        // On mobile, the recognition engine often times out or suspends.
+        // If the user hasn't pressed stop, we auto-restart the listener immediately.
+        if (isRecordingRef.current) {
+          try {
+            recognition.start();
+            console.log("Speech recognition engine auto-restarted successfully");
+          } catch (err) {
+            console.error("Failed to auto-restart speech recognition:", err);
+          }
+        }
       };
       
       recognitionRef.current = recognition;
@@ -95,7 +126,9 @@ export const RecordScreen = () => {
     }
 
     return () => {
-      if (recognitionRef.current) recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch(e) {}
+      }
       clearInterval(timerRef.current);
     };
   }, []);
@@ -184,7 +217,9 @@ export const RecordScreen = () => {
     if (!recognitionRef.current) return;
 
     if (recognitionRef.current) {
-      recognitionRef.current.lang = selectedAccent.locale || 'es-ES';
+      // Map to base language code (e.g. es, en, pt) to ensure max mobile support
+      const baseLang = selectedAccent.locale ? selectedAccent.locale.split('-')[0] : 'es';
+      recognitionRef.current.lang = baseLang;
     }
 
     try {
@@ -201,21 +236,31 @@ export const RecordScreen = () => {
       if (recognitionRef.current) recognitionRef.current.accumulatedFinal = '';
       setAudioUrl(null);
       
-      recognitionRef.current.start();
+      isRecordingRef.current = true;
       setIsRecording(true);
+      recognitionRef.current.start();
       setTimer(0);
       
       timerRef.current = setInterval(() => setTimer(prev => prev + 1), 1000);
       setStatus({ msg: "Escuchando... habla ahora", type: "recording" });
       setTimeout(() => drawWaveform(), 100);
     } catch (err) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
       setStatus({ msg: "Error de micrófono: " + err.message, type: "error" });
     }
   };
 
   const stopRecording = async () => {
-    if (recognitionRef.current && isRecording) recognitionRef.current.stop();
+    isRecordingRef.current = false;
     setIsRecording(false);
+    
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch(e) {}
+    }
+    
     clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (audioContextRef.current) audioContextRef.current.close();
