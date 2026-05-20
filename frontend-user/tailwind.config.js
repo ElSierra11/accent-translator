@@ -8,7 +8,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['Syne', 'sans-serif'],
+        display: ['Outfit', 'sans-serif'],
+        body: ['Plus Jakarta Sans', 'sans-serif'],
         mono: ['Space Mono', 'monospace'],
       },
       colors: {
@@ -18,25 +19,20 @@ export default {
         text: 'var(--text-color)',
         muted: 'var(--text-muted)',
         accent: 'var(--accent)',
-        accent2: 'var(--accent2)'
+        accent2: 'var(--accent2)',
       },
       animation: {
-        'pulse-btn': 'pulse-btn 1.5s infinite',
-        'float': 'float 12s infinite ease-in-out alternate',
-        'blink': 'blink 1s infinite',
+        'pulse-btn': 'pulse-btn 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'fade-in': 'fadeIn 0.5s ease-out',
       },
       keyframes: {
         'pulse-btn': {
-          '0%, 100%': { boxShadow: '0 4px 20px rgba(239, 68, 68, 0.4)' },
-          '50%': { boxShadow: '0 4px 40px rgba(239, 68, 68, 0.7)' },
+          '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+          '50%': { opacity: .9, transform: 'scale(1.02)' },
         },
-        'float': {
-          '0%': { transform: 'translate(0, 0) scale(1)' },
-          '100%': { transform: 'translate(40px, 60px) scale(1.15)' },
-        },
-        'blink': {
-          '0%, 100%': { opacity: 1 },
-          '50%': { opacity: 0 },
+        'fadeIn': {
+          '0%': { opacity: 0, transform: 'translateY(10px)' },
+          '100%': { opacity: 1, transform: 'translateY(0)' },
         }
       }
     },

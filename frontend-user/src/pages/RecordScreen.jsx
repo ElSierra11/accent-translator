@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, Square, RefreshCcw, LogOut, CheckCircle2, AlertCircle, Menu, X, History, MessageSquare } from 'lucide-react';
+import { Mic, Square, RefreshCcw, LogOut, CheckCircle2, History, X } from 'lucide-react';
 import { AuthContext } from '../contexts/AuthContext';
 import { apiService } from '../services/api';
+import { ACCENTS } from '../utils/accents';
+import { CustomAudioPlayer } from '../components/CustomAudioPlayer';
 
 export const RecordScreen = () => {
   const { logout } = useContext(AuthContext);
-  const [accents, setAccents] = useState([]);
-  const [selectedAccent, setSelectedAccent] = useState(null);
+  const [accents, setAccents] = useState(ACCENTS);
+  const [selectedAccent, setSelectedAccent] = useState(ACCENTS[0]);
   const selectedAccentRef = useRef(null);
   const [history, setHistory] = useState([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -18,9 +20,10 @@ export const RecordScreen = () => {
 
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState(0);
-  const [status, setStatus] = useState({ msg: 'Selecciona un acento y presiona grabar', type: 'idle' });
+  const [status, setStatus] = useState({ msg: 'Selecciona una voz y comienza', type: 'idle' });
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
+  const latestTranscriptRef = useRef('');
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -30,24 +33,19 @@ export const RecordScreen = () => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animFrameRef = useRef(null);
-  const resultAudioRef = useRef(null);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchHistory = async () => {
       try {
-        const [accentsData, historyData] = await Promise.all([
-          apiService.getEnabledAccents(),
-          apiService.getConversionsHistory()
-        ]);
-        setAccents(accentsData);
+        const historyData = await apiService.getConversionsHistory();
         setHistory(historyData);
       } catch (err) {
-        console.error(err);
+        console.error("Error fetching history:", err);
       } finally {
         setLoading(false);
       }
     };
-    fetchData();
+    fetchHistory();
     
     // Setup Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -67,18 +65,24 @@ export const RecordScreen = () => {
             interimTranscript += event.results[i][0].transcript;
           }
         }
+        
         if (finalT) {
-          setFinalTranscript(prev => prev + finalT);
+          const accumulated = (recognitionRef.current.accumulatedFinal || '') + finalT;
+          recognitionRef.current.accumulatedFinal = accumulated;
+          setFinalTranscript(accumulated);
         }
+        
+        const currentAccumulated = recognitionRef.current.accumulatedFinal || '';
+        const currentFullText = (currentAccumulated + ' ' + interimTranscript).trim();
+        
+        latestTranscriptRef.current = currentFullText;
         setTranscript(interimTranscript || finalT);
       };
 
       recognition.onerror = (event) => {
         console.error("Speech recognition error", event.error);
-        setStatus({ msg: "❌ Error de reconocimiento: " + event.error, type: "error" });
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-        }
+        setStatus({ msg: "Error de reconocimiento: " + event.error, type: "error" });
+        if (recognitionRef.current) recognitionRef.current.stop();
         setIsRecording(false);
         clearInterval(timerRef.current);
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -87,21 +91,17 @@ export const RecordScreen = () => {
       
       recognitionRef.current = recognition;
     } else {
-      setStatus({ msg: "⚠️ Tu navegador no soporta Web Speech API. Usa Chrome o Edge.", type: "error" });
+      setStatus({ msg: "Tu navegador no soporta Web Speech API. Usa Chrome.", type: "error" });
     }
 
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       clearInterval(timerRef.current);
     };
   }, []);
 
   useEffect(() => {
-    if (timer >= 60 && isRecording) {
-      stopRecording();
-    }
+    if (timer >= 60 && isRecording) stopRecording();
   }, [timer, isRecording]);
 
   const drawWaveform = () => {
@@ -119,34 +119,72 @@ export const RecordScreen = () => {
       analyserRef.current.getByteTimeDomainData(dataArray);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#0ea5e9";
-      ctx.shadowColor = "#0ea5e9";
-      ctx.shadowBlur = 8;
+      
+      const themeColor = selectedAccentRef.current?.color || '#3b82f6';
+      
+      // Create glowing linear gradient
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      gradient.addColorStop(0, themeColor);
+      gradient.addColorStop(0.5, '#6366f1');
+      gradient.addColorStop(1, themeColor);
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = gradient;
+      
+      // Custom shadow glow effect
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = themeColor;
+      
       ctx.beginPath();
 
       const sliceWidth = canvas.width / bufferLength;
       let x = 0;
+      
+      // Draw mirrored dual wave
       for (let i = 0; i < bufferLength; i++) {
         const v = dataArray[i] / 128.0;
-        const y = (v * canvas.height) / 2;
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        const amplitude = Math.abs(v - 1.0) * 1.6; // Scale volume amplitude
+        const yTop = (canvas.height / 2) - (amplitude * canvas.height / 2.2);
+        
+        if (i === 0) {
+          ctx.moveTo(x, yTop);
+        } else {
+          ctx.lineTo(x, yTop);
+        }
         x += sliceWidth;
       }
-      ctx.lineTo(canvas.width, canvas.height / 2);
+      
+      x = canvas.width;
+      for (let i = bufferLength - 1; i >= 0; i--) {
+        const v = dataArray[i] / 128.0;
+        const amplitude = Math.abs(v - 1.0) * 1.6;
+        const yBottom = (canvas.height / 2) + (amplitude * canvas.height / 2.2);
+        ctx.lineTo(x, yBottom);
+        x -= sliceWidth;
+      }
+      
+      ctx.closePath();
+      
+      // Transparent gradient fill inside waveform shape
+      ctx.fillStyle = `${themeColor}12`;
+      ctx.fill();
       ctx.stroke();
+      
+      // Reset shadow for performance
+      ctx.shadowBlur = 0;
     };
     draw();
   };
 
   const startRecording = async () => {
     if (!selectedAccent) {
-      setStatus({ msg: "⚠️ Selecciona un acento primero", type: "warning" });
+      setStatus({ msg: "Selecciona un acento primero", type: "warning" });
       return;
     }
-    if (!recognitionRef.current) {
-      setStatus({ msg: "⚠️ Reconocimiento de voz no soportado", type: "error" });
-      return;
+    if (!recognitionRef.current) return;
+
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = selectedAccent.locale || 'es-ES';
     }
 
     try {
@@ -154,57 +192,53 @@ export const RecordScreen = () => {
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256;
+      analyserRef.current.fftSize = 256; // Smaller for smoother wave line
       source.connect(analyserRef.current);
       
       setFinalTranscript('');
       setTranscript('');
+      latestTranscriptRef.current = '';
+      if (recognitionRef.current) recognitionRef.current.accumulatedFinal = '';
       setAudioUrl(null);
       
       recognitionRef.current.start();
       setIsRecording(true);
       setTimer(0);
       
-      timerRef.current = setInterval(() => {
-        setTimer(prev => prev + 1);
-      }, 1000);
-
-      setStatus({ msg: "🔴 Grabando... habla ahora", type: "recording" });
-      
+      timerRef.current = setInterval(() => setTimer(prev => prev + 1), 1000);
+      setStatus({ msg: "Escuchando... habla ahora", type: "recording" });
       setTimeout(() => drawWaveform(), 100);
     } catch (err) {
-      setStatus({ msg: "❌ Error al acceder al micrófono: " + err.message, type: "error" });
+      setStatus({ msg: "Error de micrófono: " + err.message, type: "error" });
     }
   };
 
   const stopRecording = async () => {
-    if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop();
-    }
+    if (recognitionRef.current && isRecording) recognitionRef.current.stop();
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (audioContextRef.current) audioContextRef.current.close();
 
-    setFinalTranscript(currentFinal => {
-      if (currentFinal.trim() !== '') {
-        setStatus({ msg: "⏳ Generando audio en el servidor...", type: "loading" });
-        synthesizeAndShowResult(currentFinal);
-      } else {
-        const testText = "Hola, esta es una prueba de acento. Al parecer tu micrófono no detectó audio, pero así sueno.";
-        setStatus({ msg: "⚠️ No se detectó audio, usando texto de prueba...", type: "warning" });
-        synthesizeAndShowResult(testText);
-      }
-      return currentFinal;
-    });
+    const currentFinal = latestTranscriptRef.current;
+    
+    if (currentFinal.trim() !== '') {
+      setStatus({ msg: "Procesando transcripción en servidor...", type: "loading" });
+      setFinalTranscript(currentFinal);
+      setTranscript('');
+      synthesizeAndShowResult(currentFinal);
+    } else {
+      const testText = "Hola, esta es una prueba generada. No detecté audio.";
+      setStatus({ msg: "Generando texto de prueba...", type: "warning" });
+      setFinalTranscript(testText);
+      setTranscript('');
+      synthesizeAndShowResult(testText);
+    }
   };
 
   const synthesizeAndShowResult = async (text) => {
     const currentAccent = selectedAccentRef.current;
-    if (!currentAccent) {
-      setStatus({ msg: "❌ Error: Ningún acento seleccionado", type: "error" });
-      return;
-    }
+    if (!currentAccent) return;
 
     try {
       const data = await apiService.createConversion({
@@ -217,13 +251,13 @@ export const RecordScreen = () => {
       
       if (data.success && data.audioUrl) {
         setAudioUrl(data.audioUrl);
-        if (resultAudioRef.current) {
-          resultAudioRef.current.src = data.audioUrl;
-          resultAudioRef.current.play().catch(e => console.error(e));
-        }
-        setStatus({ msg: `✅ ¡Listo! Reproduciendo acento ${currentAccent.name}`, type: "success" });
         
-        // Actualizar historial
+        // Autoplay the result cleanly
+        const autoplayAudio = new Audio(data.audioUrl);
+        autoplayAudio.play().catch(e => console.error("Error autplaying audio:", e));
+        
+        setStatus({ msg: `Voz generada: ${currentAccent.name}`, type: "success" });
+        
         const newHistoryItem = {
           id: data.id || Date.now(),
           date: new Date().toISOString(),
@@ -233,11 +267,10 @@ export const RecordScreen = () => {
         };
         setHistory(prev => [newHistoryItem, ...prev]);
         
-      } else {
-        throw new Error("No audio url returned");
-      }
+      } else throw new Error("Audio URL no devuelta por el servidor");
     } catch (err) {
-      setStatus({ msg: "❌ " + err.message, type: "error" });
+      console.error(err);
+      setStatus({ msg: err.message || "Error al conectar con el servidor", type: "error" });
     }
   };
 
@@ -249,185 +282,249 @@ export const RecordScreen = () => {
 
   return (
     <div className="min-h-screen bg-background text-text font-body flex relative overflow-hidden">
-      
+      {/* Background Orbs */}
+      <div className="orb-container">
+        <div className="orb orb-1"></div>
+        <div className="orb orb-2"></div>
+        <div className="orb orb-3"></div>
+      </div>
+
       {/* Sidebar Historial */}
-      <div className={`fixed inset-y-0 left-0 z-20 w-80 bg-surface border-r border-border transform transition-transform duration-300 ease-in-out flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
-        <div className="p-4 border-b border-border flex justify-between items-center">
-          <div className="flex items-center gap-2 font-display font-bold">
-            <History className="text-accent" size={20} /> Historial
+      <div className={`fixed inset-y-0 right-0 z-30 w-80 bg-surface/85 border-l border-border transform transition-transform duration-500 ease-in-out flex flex-col backdrop-blur-2xl ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className="p-6 border-b border-border flex justify-between items-center">
+          <div className="flex items-center gap-3 font-display font-semibold text-lg text-text">
+            <History className="text-muted" size={20} /> Historial
           </div>
-          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-1 text-muted hover:text-text rounded">
-            <X size={20} />
+          <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-muted hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+            <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
           {history.length === 0 ? (
-            <div className="text-center text-muted text-sm mt-10">
-              No tienes conversiones aún.<br/>¡Empieza a grabar!
+            <div className="text-center text-muted/70 text-sm mt-10">
+              Sin registros recientes.
             </div>
           ) : (
-            <div className="space-y-4">
-              {history.map((item) => (
-                <div key={item.id} className="bg-black/20 border border-white/5 p-3 rounded-xl hover:border-white/10 transition-colors group">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded font-bold">{item.accent}</span>
-                    <span className="text-[10px] text-muted font-mono">{new Date(item.date).toLocaleDateString()}</span>
-                  </div>
-                  <p className="text-sm text-text/80 line-clamp-2 italic mb-3 flex gap-2">
-                    <MessageSquare size={14} className="mt-0.5 text-muted shrink-0" />
-                    "{item.text}"
-                  </p>
-                  <audio src={`/uploads/${item.audio_filename}`} controls className="h-7 w-full custom-audio scale-90 origin-left" />
+            history.map((item) => (
+              <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} key={item.id} className="bg-background/60 border border-border p-4 rounded-xl hover:border-accent/40 transition-all duration-300 group">
+                <div className="flex justify-between items-center mb-2.5">
+                  <span className="text-xs text-accent font-bold tracking-wide uppercase">{item.accent}</span>
                 </div>
-              ))}
-            </div>
+                <p className="text-sm text-text/80 line-clamp-2 mb-3.5 font-medium italic">
+                  "{item.text}"
+                </p>
+                <CustomAudioPlayer src={`/uploads/${item.audio_filename}`} />
+              </motion.div>
+            ))
           )}
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative">
-        {/* Overlay for mobile sidebar */}
+      {/* Overlay for Sidebar */}
+      <AnimatePresence>
         {isSidebarOpen && (
-          <div 
-            className="fixed inset-0 bg-black/50 z-10 md:hidden backdrop-blur-sm transition-opacity"
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-20"
             onClick={() => setIsSidebarOpen(false)}
-          ></div>
+          />
         )}
+      </AnimatePresence>
 
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative z-10">
+        
         {/* Header */}
-        <header className="w-full flex justify-between items-center p-6 border-b border-border/50 sticky top-0 bg-background/80 backdrop-blur-md z-10">
-          <div className="flex items-center gap-4">
+        <header className="w-full flex justify-between items-center p-6 lg:px-8 border-b border-border bg-background/50 backdrop-blur-xl sticky top-0 z-10">
+          <div className="flex items-center gap-2">
+            {/* Custom Soundwaves Logo */}
+            <svg className="w-7 h-7 text-accent" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4 10V14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M8 6V18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M12 3V21" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M16 6V18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M20 10V14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
+            <div className="font-display text-xl font-bold tracking-tight text-text">
+              AccentShift
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
             <button 
               onClick={() => setIsSidebarOpen(true)}
-              className="md:hidden p-2 text-muted hover:text-text bg-surface rounded-lg border border-border"
+              className="flex items-center gap-2 px-4 py-2 border border-white/5 bg-surface/50 hover:bg-white/5 rounded-xl transition-all text-sm font-semibold"
             >
-              <Menu size={20} />
+              <History size={16} /> <span className="hidden sm:inline">Historial</span>
             </button>
-            <div className="font-display text-xl font-extrabold tracking-tight">
-              Accent<span className="bg-clip-text text-transparent bg-gradient-to-br from-accent to-accent2">Shift</span>
-            </div>
+            <button 
+              onClick={logout}
+              className="p-2.5 border border-white/5 bg-surface/50 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20 rounded-xl transition-all active:scale-95"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
-          <button 
-            onClick={logout}
-            className="flex items-center gap-2 px-4 py-2 bg-surface hover:bg-surface-hover rounded-lg border border-border transition-colors text-sm font-medium"
-          >
-            <LogOut size={16} /> Salir
-          </button>
         </header>
 
-        {/* Main Recording Content */}
-        <main className="w-full max-w-4xl mx-auto flex-1 flex flex-col items-center py-10 px-6">
-          <h1 className="text-3xl font-display font-bold mb-2">Selecciona un Acento</h1>
-          <p className="text-muted mb-8 text-center max-w-md">Elige cómo quieres sonar y graba tu voz.</p>
+        {/* Main Interface */}
+        <main className="w-full max-w-5xl mx-auto flex-1 flex flex-col items-center py-10 px-4 sm:px-6">
           
-          {loading ? (
-            <div className="text-muted animate-pulse">Cargando acentos...</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 w-full mb-10">
-              {accents.map(accent => (
-                <motion.div
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  key={accent.id}
-                  onClick={() => setSelectedAccent(accent)}
-                  className={`p-4 rounded-xl cursor-pointer flex flex-col items-center justify-center gap-2 border transition-all ${selectedAccent?.id === accent.id ? 'bg-accent/10 border-accent shadow-[0_0_20px_rgba(14,165,233,0.3)]' : 'bg-surface border-border hover:bg-surface-hover'}`}
-                >
-                  <img src={accent.flag} alt={accent.country} className="w-10 rounded shadow-sm" />
-                  <span className="font-bold text-sm text-center">{accent.name}</span>
-                  <span className="text-xs text-muted text-center">{accent.description}</span>
-                </motion.div>
-              ))}
-            </div>
-          )}
-
-          {/* Recorder Section */}
-          <div className="w-full bg-surface border border-border rounded-3xl p-8 flex flex-col items-center mb-10 relative overflow-hidden">
-            {/* Status Bar */}
-            <div className={`w-full p-3 rounded-xl mb-8 flex items-center justify-center gap-2 font-medium transition-colors text-sm ${
-              status.type === 'recording' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-              status.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
-              status.type === 'error' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-              status.type === 'warning' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
-              'bg-black/30 text-muted border border-border'
-            }`}>
-              {status.type === 'success' && <CheckCircle2 size={16} />}
-              {status.type === 'error' && <AlertCircle size={16} />}
-              {status.msg}
-            </div>
-
-            {/* Visualization area */}
-            <div className="w-full h-32 bg-black/40 rounded-xl mb-8 border border-white/5 relative overflow-hidden flex items-center justify-center">
-              {isRecording ? (
-                <canvas ref={canvasRef} className="w-full h-full absolute inset-0"></canvas>
-              ) : (
-                <span className="text-muted/50 text-5xl font-display opacity-20">00:00</span>
-              )}
-              {isRecording && (
-                <div className="absolute top-4 right-4 bg-red-500 text-white px-3 py-1 rounded-full font-mono text-xs font-bold shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse">
-                  {formatTime(timer)}
-                </div>
-              )}
-            </div>
-
-            <div className="text-center text-base font-medium min-h-[3rem] mb-8 w-full px-4">
-              {isRecording ? <span className="text-accent">{transcript}</span> : <span className="text-muted">La transcripción aparecerá aquí...</span>}
-            </div>
-
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full flex flex-col items-center justify-center gap-1 transition-all ${
-                isRecording 
-                  ? 'bg-red-500 hover:bg-red-600 shadow-[0_4px_20px_rgba(239,68,68,0.4)] animate-pulse-btn' 
-                  : 'bg-gradient-to-br from-accent to-accent2 hover:scale-105 shadow-[0_10px_25px_rgba(14,165,233,0.4)]'
-              } text-white`}
-            >
-              {isRecording ? (
-                <>
-                  <Square fill="currentColor" size={24} />
-                  <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider">Detener</span>
-                </>
-              ) : (
-                <>
-                  <Mic size={28} />
-                  <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider">Grabar</span>
-                </>
-              )}
-            </button>
+          <div className="text-center mb-8">
+            <h1 className="text-3xl sm:text-4xl font-display font-extrabold mb-3 bg-gradient-to-r from-text via-text to-muted bg-clip-text text-transparent">
+              Conversión de Voz
+            </h1>
+            <p className="text-muted max-w-lg mx-auto text-sm font-medium">
+              Selecciona una variante idiomática y procesa tu audio.
+            </p>
+          </div>
+          
+          {/* Accent Carousel */}
+          <div className="w-full mb-8">
+            {loading ? (
+              <div className="flex gap-4 justify-center animate-pulse overflow-hidden">
+                {[1,2,3,4].map(i => <div key={i} className="w-44 h-28 bg-surface border border-border rounded-xl"></div>)}
+              </div>
+            ) : (
+              <div className="flex gap-4 overflow-x-auto pb-4 px-2 custom-scrollbar snap-x scroll-smooth">
+                {accents.map(accent => {
+                  const isSelected = selectedAccent?.id === accent.id;
+                  return (
+                    <button
+                      key={accent.id}
+                      onClick={() => setSelectedAccent(accent)}
+                      style={isSelected ? {
+                        borderColor: accent.color,
+                        color: accent.color,
+                        boxShadow: `0 0 15px ${accent.color}25`,
+                        background: `${accent.color}08`
+                      } : {}}
+                      className={`snap-center shrink-0 w-44 p-4 rounded-xl flex flex-col items-center gap-3.5 transition-all duration-300 ${
+                        isSelected 
+                        ? 'ring-1 ring-offset-0' 
+                        : 'bg-surface/50 border-border text-text hover:border-white/10 hover:bg-surface'
+                      } border`}
+                    >
+                      <div className="w-12 h-12 rounded-full bg-background/50 border border-white/5 flex items-center justify-center shadow-inner overflow-hidden">
+                        <img 
+                          src={accent.flag} 
+                          alt={accent.country} 
+                          className="w-full h-full object-cover opacity-95 scale-105"
+                          onError={(e) => { e.target.style.display = 'none'; }} 
+                        />
+                      </div>
+                      <div className="text-center w-full">
+                        <div className="font-bold text-sm truncate w-full" title={accent.name}>{accent.name}</div>
+                        <div className="text-[9px] text-muted font-mono uppercase tracking-wider mt-1">{accent.locale}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {/* Results Section */}
+          {/* Core Recording Interface */}
+          <div className="relative w-full max-w-xl glass-panel p-8 md:p-10 flex flex-col items-center">
+            
+            {/* Status Bar */}
+            <div className="w-full flex justify-center mb-6">
+              <div className={`px-4.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-all duration-300 ${
+                status.type === 'recording' ? 'bg-red-500/10 text-red-400 border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.08)]' :
+                status.type === 'success' ? 'bg-accent/10 text-accent border border-accent/20 shadow-[0_0_15px_rgba(59,130,246,0.08)]' :
+                status.type === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                status.type === 'warning' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                'bg-background border border-border text-muted'
+              }`}>
+                {status.type === 'recording' && <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>}
+                {status.msg}
+              </div>
+            </div>
+
+            {/* Glowing Record Button */}
+            <div className="mb-6 relative flex justify-center items-center h-44 w-44">
+              {isRecording && (
+                <div className="absolute inset-0 rounded-full bg-red-500/5 animate-ping border border-red-500/10"></div>
+              )}
+              
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`relative z-10 w-28 h-28 rounded-full flex flex-col items-center justify-center gap-2 transition-all duration-300 ${
+                  isRecording 
+                    ? 'bg-background/90 border-2 border-red-500/30 text-red-400 shadow-[0_0_30px_rgba(239,68,68,0.15)] active:scale-95' 
+                    : 'bg-gradient-to-r from-accent to-accent2 text-white shadow-[0_4px_25px_rgba(59,130,246,0.3)] hover:shadow-[0_4px_30px_rgba(59,130,246,0.45)] hover:scale-105 active:scale-95'
+                }`}
+              >
+                {isRecording ? (
+                  <>
+                    <Square fill="currentColor" size={20} className="text-red-500" />
+                    <span className="text-xs font-bold font-mono text-red-400">{formatTime(timer)}</span>
+                  </>
+                ) : (
+                  <>
+                    <Mic size={26} fill="currentColor" />
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Canvas Visualizer */}
+            <div className="w-full h-20 bg-background/55 rounded-2xl border border-border relative overflow-hidden flex items-center justify-center">
+              <canvas ref={canvasRef} className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${isRecording ? 'opacity-100' : 'opacity-0'}`}></canvas>
+              {!isRecording && <div className="text-muted/40 font-mono text-xs uppercase tracking-widest font-bold">Inactivo</div>}
+            </div>
+
+            {/* Live Transcript */}
+            <div className="mt-8 text-center min-h-[4rem] w-full px-4 flex items-center justify-center">
+              <AnimatePresence mode="wait">
+                <motion.p 
+                  key={transcript || 'empty'}
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className={`text-base font-semibold leading-relaxed ${isRecording ? 'text-text' : 'text-muted'}`}
+                >
+                  {transcript || (isRecording ? 'Escuchando...' : '')}
+                </motion.p>
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {/* Synthesized Result */}
           <AnimatePresence>
             {audioUrl && (
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="w-full bg-surface border border-accent/30 rounded-3xl p-6 sm:p-8 mb-10 relative overflow-hidden"
+                exit={{ opacity: 0 }}
+                className="w-full max-w-xl mt-6 bg-surface/50 border border-border rounded-2xl p-6 relative overflow-hidden shadow-xl backdrop-blur-md"
               >
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-accent to-accent2"></div>
-                <h2 className="text-lg sm:text-xl font-display font-bold mb-4 flex items-center gap-2">
-                  <img src={selectedAccent?.flag} alt="" className="w-6 rounded" />
-                  Tu voz en {selectedAccent?.name}
-                </h2>
-                
-                <div className="bg-black/30 p-4 rounded-xl text-base sm:text-lg mb-6 border border-white/5 font-medium italic text-text/90">
-                  "{finalTranscript || 'Texto de prueba...'}"
-                </div>
-                
-                <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <audio ref={resultAudioRef} src={audioUrl} controls className="flex-1 w-full h-12 outline-none rounded-lg custom-audio" />
-                  <button 
-                    onClick={() => {
-                      setAudioUrl(null);
-                      setFinalTranscript('');
-                      setTranscript('');
-                      setStatus({ msg: 'Selecciona un acento y presiona grabar', type: 'idle' });
-                    }}
-                    className="w-full sm:w-auto px-6 py-3 bg-surface hover:bg-surface-hover border border-border rounded-xl font-medium transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                  >
-                    <RefreshCcw size={18} /> Otra vez
-                  </button>
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center gap-2 text-xs font-bold text-accent uppercase tracking-wider">
+                    <CheckCircle2 size={15} /> Transcripción procesada
+                  </div>
+                  <div className="text-text/90 font-medium bg-background/40 p-4 rounded-xl border border-border text-sm leading-relaxed italic">
+                    "{finalTranscript}"
+                  </div>
+                  
+                  <div className="flex flex-col sm:flex-row gap-4 items-center mt-1">
+                    <div className="w-full flex-1">
+                      <CustomAudioPlayer src={audioUrl} />
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        setAudioUrl(null);
+                        setFinalTranscript('');
+                        setTranscript('');
+                        latestTranscriptRef.current = '';
+                        setStatus({ msg: 'Listo', type: 'idle' });
+                      }}
+                      className="w-full sm:w-auto px-5 py-3 bg-background hover:bg-white/5 border border-border rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-sm text-text whitespace-nowrap active:scale-95"
+                    >
+                      <RefreshCcw size={16} /> Limpiar
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             )}

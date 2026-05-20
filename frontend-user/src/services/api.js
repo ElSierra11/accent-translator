@@ -8,6 +8,20 @@ const getHeaders = () => {
   };
 };
 
+const fetchWithAuth = async (url, options = {}) => {
+  const headers = { ...getHeaders(), ...options.headers };
+  const res = await fetch(url, { ...options, headers });
+  
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('accentshift_token');
+    localStorage.removeItem('accentshift_role');
+    window.location.href = '/login';
+    throw new Error("Sesión expirada. Por favor inicia sesión de nuevo.");
+  }
+  
+  return res;
+};
+
 export const apiService = {
   async login(username, password) {
     const res = await fetch('/api/login', {
@@ -53,15 +67,14 @@ export const apiService = {
   },
 
   async getConfig() {
-    const res = await fetch('/api/config', { headers: getHeaders() });
+    const res = await fetchWithAuth('/api/config');
     if (!res.ok) throw new Error("Error loading config");
     return await res.json();
   },
 
   async saveConfig(configData) {
-    const res = await fetch('/api/config', {
+    const res = await fetchWithAuth('/api/config', {
       method: 'POST',
-      headers: getHeaders(),
       body: JSON.stringify(configData)
     });
     if (!res.ok) throw new Error("Error saving config");
@@ -69,15 +82,14 @@ export const apiService = {
   },
 
   async getConversionsHistory() {
-    const res = await fetch('/api/conversions', { headers: getHeaders() });
+    const res = await fetchWithAuth('/api/conversions');
     if (!res.ok) throw new Error("Error fetching history");
     return await res.json();
   },
 
   async createConversion(conversionData) {
-    const res = await fetch('/api/conversions', {
+    const res = await fetchWithAuth('/api/conversions', {
       method: 'POST',
-      headers: getHeaders(),
       body: JSON.stringify(conversionData)
     });
     const data = await res.json();

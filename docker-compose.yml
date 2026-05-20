@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  accent-translator:
+    container_name: accent-translator-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    volumes:
+      - db-data:/app/backend/shared
+      - uploads-data:/app/uploads
+    environment:
+      - NODE_ENV=production
+    restart: always
+
+volumes:
+  db-data:
+    driver: local
+  uploads-data:
+    driver: local

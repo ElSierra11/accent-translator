@@ -3,7 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { exec } = require('child_process');
+const { EdgeTTS } = require('node-edge-tts');
 const db = require('../shared/database');
 const { authenticateToken } = require('../shared/auth');
 
@@ -98,16 +98,18 @@ app.post('/api/conversions', authenticateToken, async (req, res) => {
         }
       });
     } else {
-      const safeText = text.replace(/"/g, '\\"');
-      const command = `python -m edge_tts --voice ${voice} --text "${safeText}" --write-media "${filepath}"`;
-      
-      exec(command, (error, stdout, stderr) => {
-        if (error) {
-          console.error("edge-tts error:", error);
-          return res.status(500).json({ error: "Failed to generate Edge TTS" });
-        }
+      try {
+        const tts = new EdgeTTS({
+          voice: voice,
+          lang: locale || 'es-ES',
+          outputFormat: "audio-24khz-48kbitrate-mono-mp3"
+        });
+        await tts.ttsPromise(text, filepath);
         saveToDbAndRespond();
-      });
+      } catch (err) {
+        console.error("node-edge-tts error:", err);
+        return res.status(500).json({ error: "Failed to generate Edge TTS: " + err.message });
+      }
     }
   });
 });
