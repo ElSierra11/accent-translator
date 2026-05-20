@@ -43,12 +43,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
       // Insert default users if table is empty
       const bcrypt = require('bcryptjs');
       db.get("SELECT count(*) as count FROM users", (err, row) => {
+        if (err) {
+          console.error("Error reading users count:", err.message);
+          return;
+        }
         if (row && row.count === 0) {
           const adminHash = bcrypt.hashSync("admin", 10);
           const userHash = bcrypt.hashSync("user", 10);
-          db.run("INSERT INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [adminHash]);
-          db.run("INSERT INTO users (username, password, role) VALUES ('user', ?, 'user')", [userHash]);
-          console.log("Default users created: admin/admin, user/user");
+          db.run("INSERT OR IGNORE INTO users (username, password, role) VALUES ('admin', ?, 'admin')", [adminHash], (err) => {
+            if (err) console.error("Error creating default admin:", err.message);
+          });
+          db.run("INSERT OR IGNORE INTO users (username, password, role) VALUES ('user', ?, 'user')", [userHash], (err) => {
+            if (err) console.error("Error creating default user:", err.message);
+          });
+          console.log("Default users initialization triggered");
         }
       });
     });
